@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
   
   // Navigation State
   const [mainMenuTab, setMainMenuTab] = useState<'all' | 'playlist' | 'artist' | 'favorite'>('all');
@@ -30,13 +31,26 @@ const App: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const currentSong = songs[currentIndex];
 
+  // Monitor Connection
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // Load stored songs on mount
   useEffect(() => {
     const loadLibrary = async () => {
       try {
         const stored = await getAllStoredSongs();
         if (stored.length > 0) {
-          setSongs(prev => [...stored, ...prev]);
+          // Put stored songs first so user sees their local music immediately
+          setSongs(prev => [...stored, ...prev.filter(ps => !stored.find(s => s.id === ps.id))]);
         }
       } catch (err) {
         console.error("Failed to load stored library:", err);
@@ -58,7 +72,6 @@ const App: React.FC = () => {
       await deleteStoredSong(id);
       setSongs(prev => {
         const newSongs = prev.filter(s => s.id !== id);
-        // If current song is deleted, reset index or move to prev
         if (currentSong?.id === id) {
           setCurrentIndex(0);
           setPlaybackStatus(PlaybackStatus.STOPPED);
@@ -84,7 +97,7 @@ const App: React.FC = () => {
         setPlaybackStatus(PlaybackStatus.PLAYING);
       } catch (error) {
         console.error("Playback failed:", error);
-        setAudioError("Unable to play audio. This may be due to browser restrictions.");
+        setAudioError("Unable to play audio. Check permissions or file availability.");
         setPlaybackStatus(PlaybackStatus.PAUSED);
       }
     }
@@ -183,7 +196,6 @@ const App: React.FC = () => {
     processFiles(event.target.files);
   };
 
-  // Robust Android Storage Permission Handling
   const handleScanLibrary = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
@@ -191,7 +203,7 @@ const App: React.FC = () => {
         if (check.publicStorage !== 'granted') {
           const request = await Filesystem.requestPermissions();
           if (request.publicStorage !== 'granted') {
-            setAudioError("Storage permission (READ_EXTERNAL_STORAGE) is required to access device music.");
+            setAudioError("Storage permission is required to access device music.");
             return;
           }
         }
@@ -240,7 +252,6 @@ const App: React.FC = () => {
     };
   }, [handleNext, currentSong?.id]);
 
-  // Filtering Logic
   const filteredSongs: Song[] = useMemo(() => {
     if (!searchQuery.trim()) return songs;
     const q = searchQuery.toLowerCase();
@@ -292,6 +303,13 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col items-center p-4 md:p-6 lg:p-8 font-sans transition-all duration-1000">
       
+      {/* Offline Alert */}
+      {isOffline && (
+        <div className="fixed top-0 left-0 right-0 bg-blue-600/90 backdrop-blur-md text-white py-2 text-center text-[10px] font-black uppercase tracking-[0.3em] z-50 animate-in slide-in-from-top duration-500">
+          Running in Offline Mode - Local Library Only
+        </div>
+      )}
+
       <div className="w-full max-w-7xl space-y-6 md:space-y-6 lg:space-y-8 mb-8 md:mb-6 lg:mb-12">
         {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -343,7 +361,7 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Main Menu Navigation with Search */}
+        {/* Navigation */}
         <nav className={`${isMenuOpen ? 'flex flex-col w-full' : 'hidden'} md:flex md:flex-row items-center justify-between gap-4 p-2 bg-slate-900/60 backdrop-blur-2xl border border-white/10 rounded-[1.75rem] shadow-2xl transition-all duration-300 animate-in fade-in zoom-in-95`}>
           <div className="flex flex-col md:flex-row gap-2 md:gap-1 lg:gap-4 w-full md:w-auto">
             {navItems.map((item) => (
@@ -488,7 +506,7 @@ const App: React.FC = () => {
                         <div className="flex items-center justify-between px-2">
                           <h4 className="text-[10px] md:text-[8px] lg:text-sm font-black text-blue-400 uppercase tracking-widest flex items-center gap-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
-                            Your Stored Library
+                            Your Device Library
                           </h4>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 md:gap-3 lg:gap-4">
@@ -522,7 +540,7 @@ const App: React.FC = () => {
                    )}
 
                    <div className="space-y-6 md:space-y-4">
-                      <h4 className="text-[10px] md:text-[8px] lg:text-sm font-black text-slate-500 uppercase tracking-widest px-2">Upcoming Queue</h4>
+                      <h4 className="text-[10px] md:text-[8px] lg:text-sm font-black text-slate-500 uppercase tracking-widest px-2">Next in Queue</h4>
                       <div className="space-y-2">
                          {upcomingSongs.length > 0 ? upcomingSongs.map((song, i) => (
                            <SongItem 
@@ -577,11 +595,6 @@ const App: React.FC = () => {
                        </div>
                     </div>
                   ))}
-                  {Object.keys(artistGroups).length === 0 && (
-                    <div className="py-20 text-center text-slate-600 font-bold uppercase tracking-widest">
-                      No matching artists
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -600,11 +613,6 @@ const App: React.FC = () => {
                       onDelete={(e) => handleDeleteSong(song.id, e)}
                     />
                   ))}
-                  {filteredSongs.filter(s => mainMenuTab === 'all' ? true : !!s.favorite).length === 0 && (
-                    <div className="py-20 text-center text-slate-600 font-bold uppercase tracking-widest">
-                      {searchQuery ? 'No results found' : (mainMenuTab === 'favorite' ? 'No favorites yet' : 'Library is empty')}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -620,7 +628,7 @@ const App: React.FC = () => {
       />
 
       <footer className="mt-8 md:mt-6 lg:mt-12 text-slate-700 text-[8px] md:text-[7px] lg:text-[10px] font-black uppercase tracking-[0.5em] pb-8 text-center px-4">
-        VibeSun Native Engine v2.6.0
+        VibeSun Persistence Engine v2.7.0 {isOffline ? '(Offline)' : ''}
       </footer>
     </div>
   );
