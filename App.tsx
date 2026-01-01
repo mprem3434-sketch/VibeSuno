@@ -353,7 +353,7 @@ const App: React.FC = () => {
             </div>
           </div>
           
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-end">
             <button 
               onClick={handleScanLibrary}
               disabled={isScanning}
