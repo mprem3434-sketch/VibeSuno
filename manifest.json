@@ -1,0 +1,26 @@
+
+{
+  "name": "VibeSun AI Music Player",
+  "short_name": "VibeSun",
+  "description": "Neural Audio Engine & AI Music Player",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/vibeflow-icon/192/192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://picsum.photos/seed/vibeflow-icon/512/512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "categories": ["music", "entertainment"]
+}
