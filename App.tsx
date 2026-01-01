@@ -313,39 +313,63 @@ const App: React.FC = () => {
       <div className="w-full max-w-7xl space-y-6 md:space-y-6 lg:space-y-8 mb-8 md:mb-6 lg:mb-12">
         {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div className="flex items-center justify-between w-full md:w-auto">
-            <div className="flex items-center gap-4">
-              <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-2.5 rounded-2xl shadow-xl shadow-blue-500/20 rotate-3">
-                <Icons.Music className="w-6 h-6 text-white" />
+          <div className="flex items-center justify-between w-full md:w-auto gap-4">
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-2 rounded-xl shadow-xl shadow-blue-500/20 rotate-3">
+                <Icons.Music className="w-5 h-5 md:w-6 md:h-6 text-white" />
               </div>
-              <h1 className="text-3xl font-black tracking-tighter">VIBE<span className="text-blue-500">SUN</span></h1>
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tighter">VIBE<span className="text-blue-500">SUN</span></h1>
             </div>
 
-            <button 
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="md:hidden p-3 bg-slate-900/60 border border-white/10 rounded-2xl text-slate-300 active:scale-90 transition-all"
-            >
-              {isMenuOpen ? <Icons.X className="w-6 h-6" /> : <Icons.Menu className="w-6 h-6" />}
-            </button>
+            <div className="flex items-center gap-2 flex-1 justify-end">
+              {/* Mobile Search Bar - Positioned left of menu button */}
+              <div className="relative md:hidden flex-1 max-w-[180px] group">
+                <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                  <Icons.Search className="w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                </div>
+                <input 
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search..."
+                  className="w-full bg-slate-800/40 border border-white/5 focus:border-blue-500/50 focus:bg-slate-800/60 rounded-xl py-2 pl-9 pr-8 outline-none transition-all text-xs placeholder:text-slate-600 text-slate-200"
+                />
+                {searchQuery && (
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="absolute inset-y-0 right-3 flex items-center text-slate-500 hover:text-white transition-colors"
+                  >
+                    <Icons.X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <button 
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                className="md:hidden p-2.5 bg-slate-900/60 border border-white/10 rounded-xl text-slate-300 active:scale-90 transition-all flex-shrink-0"
+              >
+                {isMenuOpen ? <Icons.X className="w-5 h-5" /> : <Icons.Menu className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
           
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full md:w-auto justify-end">
             <button 
               onClick={handleScanLibrary}
               disabled={isScanning}
               title="Sync with Device Storage"
-              className="relative flex items-center gap-2 px-5 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 rounded-2xl transition-all text-sm font-bold border border-blue-500/20 active:scale-95 shadow-lg group overflow-hidden"
+              className="relative flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-blue-600/20 hover:bg-blue-600/30 rounded-xl sm:rounded-2xl transition-all text-xs sm:text-sm font-bold border border-blue-500/20 active:scale-95 shadow-lg group overflow-hidden"
             >
               <div className="absolute inset-0 bg-blue-500/10 animate-pulse group-hover:bg-blue-500/20"></div>
-              <Icons.Shield className="w-4 h-4 text-blue-400 relative z-10" />
-              <span className="relative z-10">{isScanning ? 'Syncing...' : 'Sync Device Storage'}</span>
+              <Icons.Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-400 relative z-10" />
+              <span className="relative z-10">{isScanning ? 'Syncing...' : 'Sync Device'}</span>
             </button>
 
             <button 
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 rounded-2xl transition-all text-sm font-bold border border-white/5 active:scale-95 shadow-sm"
+              className="flex items-center gap-2 px-4 sm:px-5 py-2 sm:py-2.5 bg-white/5 hover:bg-white/10 rounded-xl sm:rounded-2xl transition-all text-xs sm:text-sm font-bold border border-white/5 active:scale-95 shadow-sm"
             >
-              <Icons.Upload className="w-4 h-4 text-slate-400" />
+              <Icons.Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
               Import
             </button>
             
@@ -383,22 +407,22 @@ const App: React.FC = () => {
             ))}
           </div>
 
-          {/* Search Bar */}
-          <div className="relative w-full md:w-44 lg:w-80 group mt-2 md:mt-0 px-2 md:px-0 md:mr-2">
-            <div className="absolute inset-y-0 left-5 md:left-3 flex items-center pointer-events-none">
+          {/* Desktop Search Bar - Hidden on Mobile */}
+          <div className="hidden md:block relative w-44 lg:w-80 group md:mr-2">
+            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
               <Icons.Search className="w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
             </div>
             <input 
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search..."
-              className="w-full bg-slate-800/40 border border-white/5 focus:border-blue-500/50 focus:bg-slate-800/60 rounded-xl py-3 md:py-2 lg:py-3 pl-12 md:pl-10 pr-10 outline-none transition-all text-sm placeholder:text-slate-600 text-slate-200"
+              placeholder="Search library..."
+              className="w-full bg-slate-800/40 border border-white/5 focus:border-blue-500/50 focus:bg-slate-800/60 rounded-xl py-2.5 lg:py-3 pl-10 pr-10 outline-none transition-all text-sm placeholder:text-slate-600 text-slate-200"
             />
             {searchQuery && (
               <button 
                 onClick={() => setSearchQuery('')}
-                className="absolute inset-y-0 right-5 md:right-3 flex items-center text-slate-500 hover:text-white transition-colors"
+                className="absolute inset-y-0 right-3 flex items-center text-slate-500 hover:text-white transition-colors"
               >
                 <Icons.X className="w-4 h-4" />
               </button>
