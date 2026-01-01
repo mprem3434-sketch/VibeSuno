@@ -4,6 +4,7 @@ import { Song, PlaybackStatus } from './types';
 import { DEFAULT_SONGS, Icons } from './constants';
 import PlayerControls from './components/PlayerControls';
 import AudioVisualizer from './components/AudioVisualizer';
+import { getAllStoredSongs, saveSong, deleteStoredSong } from './services/storage';
 
 // Import Capacitor for native functionality
 import { Capacitor } from '@capacitor/core';
@@ -29,9 +30,45 @@ const App: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const currentSong = songs[currentIndex];
 
+  // Load stored songs on mount
+  useEffect(() => {
+    const loadLibrary = async () => {
+      try {
+        const stored = await getAllStoredSongs();
+        if (stored.length > 0) {
+          setSongs(prev => [...stored, ...prev]);
+        }
+      } catch (err) {
+        console.error("Failed to load stored library:", err);
+      }
+    };
+    loadLibrary();
+  }, []);
+
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setSongs(prev => prev.map(s => s.id === id ? { ...s, favorite: !s.favorite } : s));
+  };
+
+  const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to remove this song from your stored library?")) return;
+    
+    try {
+      await deleteStoredSong(id);
+      setSongs(prev => {
+        const newSongs = prev.filter(s => s.id !== id);
+        // If current song is deleted, reset index or move to prev
+        if (currentSong?.id === id) {
+          setCurrentIndex(0);
+          setPlaybackStatus(PlaybackStatus.STOPPED);
+        }
+        return newSongs;
+      });
+    } catch (err) {
+      console.error("Failed to delete song:", err);
+      alert("Error removing track from storage.");
+    }
   };
 
   const handleTogglePlay = async () => {
@@ -91,17 +128,17 @@ const App: React.FC = () => {
     }
   };
 
-  const processFiles = (files: FileList | null) => {
+  const processFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     
     setIsScanning(true);
     const newSongs: Song[] = [];
     
-    Array.from(files).forEach((file, index) => {
-      if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|m4a)$/i)) return;
+    const processingPromises = Array.from(files).map(async (file, index) => {
+      if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|m4a)$/i)) return null;
       
       const url = URL.createObjectURL(file);
-      newSongs.push({
+      const song: Song = {
         id: `local-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
         title: file.name.replace(/\.[^/.]+$/, ""),
         artist: 'Internal Storage',
@@ -110,11 +147,22 @@ const App: React.FC = () => {
         audioUrl: url,
         duration: 0,
         favorite: false
-      });
+      };
+
+      try {
+        await saveSong(song, file);
+      } catch (err) {
+        console.error("Failed to persist song:", file.name, err);
+      }
+
+      return song;
     });
 
-    if (newSongs.length > 0) {
-      setSongs(prev => [...newSongs, ...prev]);
+    const results = await Promise.all(processingPromises);
+    const validSongs = results.filter((s): s is Song => s !== null);
+
+    if (validSongs.length > 0) {
+      setSongs(prev => [...validSongs, ...prev]);
       setCurrentIndex(0);
       setAudioError(null);
       setMainMenuTab('playlist');
@@ -135,20 +183,22 @@ const App: React.FC = () => {
     processFiles(event.target.files);
   };
 
-  // Improved native permission handling for Android
+  // Robust Android Storage Permission Handling
   const handleScanLibrary = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
-        const status = await Filesystem.checkPermissions();
-        if (status.publicStorage !== 'granted') {
+        const check = await Filesystem.checkPermissions();
+        if (check.publicStorage !== 'granted') {
           const request = await Filesystem.requestPermissions();
           if (request.publicStorage !== 'granted') {
-            setAudioError("Storage permission is required to access your music.");
+            setAudioError("Storage permission (READ_EXTERNAL_STORAGE) is required to access device music.");
             return;
           }
         }
       } catch (err) {
-        console.error("Permission check failed", err);
+        console.error("Permission request failed", err);
+        setAudioError("An error occurred while requesting storage permissions.");
+        return;
       }
     }
 
@@ -265,11 +315,12 @@ const App: React.FC = () => {
             <button 
               onClick={handleScanLibrary}
               disabled={isScanning}
+              title="Sync with Device Storage"
               className="relative flex items-center gap-2 px-5 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 rounded-2xl transition-all text-sm font-bold border border-blue-500/20 active:scale-95 shadow-lg group overflow-hidden"
             >
               <div className="absolute inset-0 bg-blue-500/10 animate-pulse group-hover:bg-blue-500/20"></div>
               <Icons.Shield className="w-4 h-4 text-blue-400 relative z-10" />
-              <span className="relative z-10">{isScanning ? 'Syncing...' : 'Sync Local Storage'}</span>
+              <span className="relative z-10">{isScanning ? 'Syncing...' : 'Sync Device Storage'}</span>
             </button>
 
             <button 
@@ -404,7 +455,7 @@ const App: React.FC = () => {
           
           {audioError && (
             <div className="text-rose-400 text-[10px] md:text-[8px] lg:text-xs font-black bg-rose-500/10 px-6 py-4 rounded-3xl border border-rose-500/20 uppercase tracking-[0.2em] text-center mx-4">
-              Error: {audioError}
+              {audioError}
             </div>
           )}
         </div>
@@ -437,7 +488,7 @@ const App: React.FC = () => {
                         <div className="flex items-center justify-between px-2">
                           <h4 className="text-[10px] md:text-[8px] lg:text-sm font-black text-blue-400 uppercase tracking-widest flex items-center gap-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
-                            Internal Tracks
+                            Your Stored Library
                           </h4>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 md:gap-3 lg:gap-4">
@@ -449,7 +500,7 @@ const App: React.FC = () => {
                                 setCurrentIndex(idx);
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
-                              className={`group cursor-pointer bg-white/5 rounded-2xl md:rounded-2xl lg:rounded-3xl p-2 md:p-2 lg:p-3 border border-white/5 transition-all hover:bg-white/10 hover:border-blue-500/30 ${currentSong?.id === song.id ? 'ring-2 ring-blue-500/50 bg-blue-500/5' : ''}`}
+                              className={`group relative cursor-pointer bg-white/5 rounded-2xl md:rounded-2xl lg:rounded-3xl p-2 md:p-2 lg:p-3 border border-white/5 transition-all hover:bg-white/10 hover:border-blue-500/30 ${currentSong?.id === song.id ? 'ring-2 ring-blue-500/50 bg-blue-500/5' : ''}`}
                             >
                                <div className="relative aspect-square mb-2 md:mb-2 lg:mb-3 overflow-hidden rounded-xl md:rounded-xl lg:rounded-2xl shadow-lg">
                                  <img src={song.coverUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt="" />
@@ -457,7 +508,13 @@ const App: React.FC = () => {
                                     <Icons.Play className="w-8 h-8 md:w-6 md:h-6 lg:w-10 lg:h-10 text-white" />
                                  </div>
                                </div>
-                               <p className="text-[10px] md:text-[9px] lg:text-xs font-black truncate text-slate-200">{song.title}</p>
+                               <p className="text-[10px] md:text-[9px] lg:text-xs font-black truncate text-slate-200 pr-6">{song.title}</p>
+                               <button 
+                                 onClick={(e) => handleDeleteSong(song.id, e)}
+                                 className="absolute bottom-3 right-3 text-slate-600 hover:text-rose-500 transition-colors"
+                               >
+                                 <Icons.Trash className="w-3.5 h-3.5" />
+                               </button>
                             </div>
                           ))}
                         </div>
@@ -479,6 +536,7 @@ const App: React.FC = () => {
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
                               onFavorite={(e) => toggleFavorite(song.id, e)}
+                              onDelete={(e) => handleDeleteSong(song.id, e)}
                            />
                          )) : (
                            <div className="py-12 md:py-16 lg:py-20 text-center border-2 border-dashed border-white/5 rounded-[2rem] lg:rounded-[2.5rem]">
@@ -513,6 +571,7 @@ const App: React.FC = () => {
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
                               onFavorite={(e) => toggleFavorite(song.id, e)}
+                              onDelete={(e) => handleDeleteSong(song.id, e)}
                             />
                           ))}
                        </div>
@@ -538,6 +597,7 @@ const App: React.FC = () => {
                         setPlaybackStatus(PlaybackStatus.PLAYING);
                       }}
                       onFavorite={(e) => toggleFavorite(song.id, e)}
+                      onDelete={(e) => handleDeleteSong(song.id, e)}
                     />
                   ))}
                   {filteredSongs.filter(s => mainMenuTab === 'all' ? true : !!s.favorite).length === 0 && (
@@ -560,7 +620,7 @@ const App: React.FC = () => {
       />
 
       <footer className="mt-8 md:mt-6 lg:mt-12 text-slate-700 text-[8px] md:text-[7px] lg:text-[10px] font-black uppercase tracking-[0.5em] pb-8 text-center px-4">
-        VibeSun Local Audio Engine v2.5.0
+        VibeSun Native Engine v2.6.0
       </footer>
     </div>
   );
@@ -572,9 +632,10 @@ interface SongItemProps {
   isPlaying: boolean;
   onPlay: () => void;
   onFavorite: (e: React.MouseEvent) => void;
+  onDelete: (e: React.MouseEvent) => void;
 }
 
-const SongItem: React.FC<SongItemProps> = ({ song, isActive, isPlaying, onPlay, onFavorite }) => (
+const SongItem: React.FC<SongItemProps> = ({ song, isActive, isPlaying, onPlay, onFavorite, onDelete }) => (
   <button
     onClick={onPlay}
     className={`w-full group flex items-center gap-3 md:gap-3 lg:gap-5 p-2.5 md:p-2 lg:p-4 rounded-[1.25rem] md:rounded-[1.25rem] lg:rounded-[1.75rem] transition-all border ${
@@ -597,21 +658,31 @@ const SongItem: React.FC<SongItemProps> = ({ song, isActive, isPlaying, onPlay, 
       <div className="flex items-center gap-2">
         <p className={`font-black text-[11px] md:text-[10px] lg:text-sm truncate ${isActive ? 'text-white' : 'text-slate-100 group-hover:text-blue-400 transition-colors'}`}>{song.title}</p>
         {song.id.startsWith('local-') && (
-           <span className={`text-[7px] md:text-[6px] lg:text-[8px] px-1.5 md:px-1 lg:px-2 py-0.5 rounded-full font-black uppercase tracking-tighter ${isActive ? 'bg-white/20 text-white' : 'bg-blue-500/10 text-blue-500'}`}>User</span>
+           <span className={`text-[7px] md:text-[6px] lg:text-[8px] px-1.5 md:px-1 lg:px-2 py-0.5 rounded-full font-black uppercase tracking-tighter ${isActive ? 'bg-white/20 text-white' : 'bg-blue-500/10 text-blue-500'}`}>Stored</span>
         )}
       </div>
       <p className={`text-[8px] md:text-[7px] lg:text-[10px] uppercase font-black tracking-widest truncate ${isActive ? 'text-blue-200' : 'text-slate-500'}`}>{song.artist}</p>
     </div>
-    <div className="flex items-center gap-2 md:gap-2 lg:gap-4">
+    <div className="flex items-center gap-1 md:gap-2 lg:gap-3">
        <span className={`text-[9px] md:text-[8px] lg:text-[10px] font-mono font-bold hidden sm:inline ${isActive ? 'text-blue-100' : 'text-slate-600'}`}>
          {song.duration > 0 ? `${Math.floor(song.duration / 60)}:${(Math.floor(song.duration % 60)).toString().padStart(2, '0')}` : '0:00'}
        </span>
        <button 
         onClick={onFavorite}
+        title="Favorite"
         className={`p-1.5 md:p-1 lg:p-2 transition-all transform active:scale-150 ${song.favorite ? (isActive ? 'text-white' : 'text-rose-500') : (isActive ? 'text-blue-300' : 'text-slate-800 opacity-0 group-hover:opacity-100 hover:text-rose-400')}`}
       >
         <Icons.Heart className="w-4 h-4 md:w-4 md:h-4 lg:w-5 lg:h-5" fill={song.favorite ? 'currentColor' : 'none'} />
       </button>
+      {song.id.startsWith('local-') && (
+        <button 
+          onClick={onDelete}
+          title="Remove from Storage"
+          className={`p-1.5 md:p-1 lg:p-2 transition-all transform active:scale-150 ${isActive ? 'text-blue-100 hover:text-rose-200' : 'text-slate-800 opacity-0 group-hover:opacity-100 hover:text-rose-500'}`}
+        >
+          <Icons.Trash className="w-4 h-4 md:w-4 md:h-4 lg:w-5 lg:h-5" />
+        </button>
+      )}
     </div>
   </button>
 );
