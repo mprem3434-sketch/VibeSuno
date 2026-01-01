@@ -2,11 +2,13 @@
 {
   "name": "vibesun-ai-player",
   "version": "1.0.0",
-  "description": "AI-Powered Music Player with Gemini",
-  "main": "index.js",
+  "description": "High-Performance Local Music Player",
+  "type": "module",
   "scripts": {
+    "dev": "vite",
     "start": "vite",
     "build": "vite build",
+    "preview": "vite preview",
     "build:mobile": "npm run build && npx cap copy android",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",
@@ -15,15 +17,19 @@
   "dependencies": {
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
-    "@google/genai": "^1.34.0",
+    "@capacitor/filesystem": "^6.0.0",
     "d3": "^7.9.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/d3": "^7.4.3",
+    "@vitejs/plugin-react": "^4.3.1",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5.0.0",
-    "vite": "^5.0.0"
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
   }
 }

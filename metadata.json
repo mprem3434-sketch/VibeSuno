@@ -1,6 +1,6 @@
 {
-  "name": "VibeSun AI Music Player",
-  "description": "An intelligent music player that generates curated playlists based on your mood using Gemini AI, featuring a real-time D3 frequency visualizer.",
+  "name": "VibeSun Music Player",
+  "description": "A high-performance local music player featuring real-time D3 frequency visualization and native storage integration.",
   "requestFramePermissions": [
     "microphone",
     "camera",
@@ -9,7 +9,8 @@
   "androidPermissions": [
     "android.permission.READ_EXTERNAL_STORAGE",
     "android.permission.WRITE_EXTERNAL_STORAGE",
-    "android.permission.MANAGE_EXTERNAL_STORAGE"
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.READ_MEDIA_AUDIO"
   ],
   "short_name": "VibeSun",
   "start_url": ".",

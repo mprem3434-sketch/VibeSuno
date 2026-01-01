@@ -3,10 +3,11 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Song, PlaybackStatus } from './types';
 import { DEFAULT_SONGS, Icons } from './constants';
 import PlayerControls from './components/PlayerControls';
-import VibeInput from './components/VibeInput';
 import AudioVisualizer from './components/AudioVisualizer';
-import LyricsDisplay from './components/LyricsDisplay';
-import { generateAIPartialSongs, generateSongVibeAnalysis, generateVibeArt, generateLyrics } from './services/geminiService';
+
+// Import Capacitor for native functionality
+import { Capacitor } from '@capacitor/core';
+import { Filesystem } from '@capacitor/filesystem';
 
 const App: React.FC = () => {
   const [songs, setSongs] = useState<Song[]>(DEFAULT_SONGS);
@@ -14,17 +15,13 @@ const App: React.FC = () => {
   const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>(PlaybackStatus.STOPPED);
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(0.7);
-  const [isLoadingVibe, setIsLoadingVibe] = useState(false);
-  const [currentVibeText, setCurrentVibeText] = useState<string>('');
-  const [lyrics, setLyrics] = useState<string>('');
-  const [isLyricsLoading, setIsLyricsLoading] = useState(false);
   const [playlistArt, setPlaylistArt] = useState<string>('');
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
   // Navigation State
-  const [mainMenuTab, setMainMenuTab] = useState<'all' | 'playlist' | 'artist' | 'favorite' | 'feelings'>('all');
+  const [mainMenuTab, setMainMenuTab] = useState<'all' | 'playlist' | 'artist' | 'favorite'>('all');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -138,74 +135,34 @@ const App: React.FC = () => {
     processFiles(event.target.files);
   };
 
-  const handleScanLibrary = () => {
+  // Improved native permission handling for Android
+  const handleScanLibrary = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const status = await Filesystem.checkPermissions();
+        if (status.publicStorage !== 'granted') {
+          const request = await Filesystem.requestPermissions();
+          if (request.publicStorage !== 'granted') {
+            setAudioError("Storage permission is required to access your music.");
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("Permission check failed", err);
+      }
+    }
+
     if (folderInputRef.current) {
       folderInputRef.current.click();
     }
   };
 
-  const handleGeneratePlaylist = async (mood: string) => {
-    setIsLoadingVibe(true);
-    setAudioError(null);
-    try {
-      const [aiSongs, vibeArt] = await Promise.all([
-        generateAIPartialSongs(mood),
-        generateVibeArt(mood)
-      ]);
-      
-      if (aiSongs.length > 0) {
-        const newSongs = aiSongs as Song[];
-        setSongs(newSongs);
-        setCurrentIndex(0);
-        setProgress(0);
-        setPlaylistArt(vibeArt);
-        setPlaybackStatus(PlaybackStatus.STOPPED);
-        setMainMenuTab('playlist');
-        
-        setTimeout(async () => {
-           if(audioRef.current) {
-             try {
-               audioRef.current.load();
-               await audioRef.current.play();
-               setPlaybackStatus(PlaybackStatus.PLAYING);
-             } catch (e) {
-               console.warn("Autoplay failed:", e);
-               setPlaybackStatus(PlaybackStatus.PAUSED);
-             }
-           }
-        }, 150);
-      }
-    } catch (error) {
-      console.error("Vibe generation failed", error);
-      setAudioError("Failed to generate vibe. Please try again.");
-    } finally {
-      setIsLoadingVibe(false);
-    }
-  };
-
   useEffect(() => {
-    if (currentSong) {
-      setIsLyricsLoading(true);
-      setLyrics("");
-      
-      Promise.all([
-        generateLyrics(currentSong),
-        generateSongVibeAnalysis(currentSong)
-      ]).then(([lyricsRes, vibeRes]) => {
-        setLyrics(lyricsRes);
-        setCurrentVibeText(vibeRes);
-        setIsLyricsLoading(false);
-      }).catch(err => {
-        console.error("Error fetching AI content", err);
-        setIsLyricsLoading(false);
-      });
-
-      if (audioRef.current) {
-        audioRef.current.load();
-        audioRef.current.volume = volume;
-        if (playbackStatus === PlaybackStatus.PLAYING) {
-          audioRef.current.play().catch(console.error);
-        }
+    if (currentSong && audioRef.current) {
+      audioRef.current.load();
+      audioRef.current.volume = volume;
+      if (playbackStatus === PlaybackStatus.PLAYING) {
+        audioRef.current.play().catch(console.error);
       }
     }
   }, [currentSong?.id]);
@@ -234,7 +191,6 @@ const App: React.FC = () => {
   }, [handleNext, currentSong?.id]);
 
   // Filtering Logic
-  // Fix: Explicitly type filteredSongs as Song[] to avoid 'unknown' inference issues.
   const filteredSongs: Song[] = useMemo(() => {
     if (!searchQuery.trim()) return songs;
     const q = searchQuery.toLowerCase();
@@ -245,10 +201,8 @@ const App: React.FC = () => {
     );
   }, [songs, searchQuery]);
 
-  // Fix: Explicitly type addedSongs as Song[] to avoid 'unknown' inference issues.
   const addedSongs: Song[] = useMemo(() => filteredSongs.filter(s => s.id.startsWith('local-')), [filteredSongs]);
   
-  // Fix: Explicitly type upcomingSongs as Song[] to avoid 'unknown' inference issues.
   const upcomingSongs: Song[] = useMemo(() => {
     const afterCurrent = songs.slice(currentIndex + 1);
     if (!searchQuery.trim()) return afterCurrent;
@@ -259,7 +213,6 @@ const App: React.FC = () => {
     );
   }, [songs, currentIndex, searchQuery]);
 
-  // Fix: Explicitly type artistGroups as Record<string, Song[]> to avoid 'unknown' inference issues.
   const artistGroups: Record<string, Song[]> = useMemo(() => {
     const groups: Record<string, Song[]> = {};
     filteredSongs.forEach(s => {
@@ -274,7 +227,6 @@ const App: React.FC = () => {
     { id: 'playlist', label: 'Playlist', icon: Icons.List },
     { id: 'artist', label: 'Artist', icon: Icons.Users },
     { id: 'favorite', label: 'Favorite', icon: Icons.Heart },
-    { id: 'feelings', label: 'Feelings', icon: Icons.Sparkles },
   ];
 
   const sectionHeader = useMemo(() => {
@@ -283,13 +235,13 @@ const App: React.FC = () => {
       case 'playlist': return 'Playlist & Queue';
       case 'artist': return 'Artists';
       case 'favorite': return 'Your Favorites';
-      case 'feelings': return 'AI Vibe Engine';
       default: return '';
     }
   }, [mainMenuTab]);
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col items-center p-4 md:p-6 lg:p-8 font-sans transition-all duration-1000">
+      
       <div className="w-full max-w-7xl space-y-6 md:space-y-6 lg:space-y-8 mb-8 md:mb-6 lg:mb-12">
         {/* Header */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -318,7 +270,6 @@ const App: React.FC = () => {
               <div className="absolute inset-0 bg-blue-500/10 animate-pulse group-hover:bg-blue-500/20"></div>
               <Icons.Shield className="w-4 h-4 text-blue-400 relative z-10" />
               <span className="relative z-10">{isScanning ? 'Syncing...' : 'Sync Local Storage'}</span>
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#020617] animate-bounce"></div>
             </button>
 
             <button 
@@ -341,7 +292,7 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Main Menu Navigation with Search - FIXED FOR TABLET VIEW */}
+        {/* Main Menu Navigation with Search */}
         <nav className={`${isMenuOpen ? 'flex flex-col w-full' : 'hidden'} md:flex md:flex-row items-center justify-between gap-4 p-2 bg-slate-900/60 backdrop-blur-2xl border border-white/10 rounded-[1.75rem] shadow-2xl transition-all duration-300 animate-in fade-in zoom-in-95`}>
           <div className="flex flex-col md:flex-row gap-2 md:gap-1 lg:gap-4 w-full md:w-auto">
             {navItems.map((item) => (
@@ -401,15 +352,15 @@ const App: React.FC = () => {
               className="relative w-full h-full object-cover rounded-[2rem] md:rounded-[2.5rem] lg:rounded-[3.5rem] shadow-2xl border-4 border-white/5 ring-1 ring-white/10 transition-transform duration-700 group-hover:scale-[1.02]"
             />
             
-            {(isLoadingVibe || isScanning) && (
+            {(isScanning) && (
               <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xl rounded-[2rem] md:rounded-[2.5rem] lg:rounded-[3.5rem] flex items-center justify-center z-20 border-4 border-blue-500/30">
                 <div className="flex flex-col items-center gap-4 md:gap-4 lg:gap-6">
                   <div className="relative">
-                    <Icons.Sparkles className="w-10 h-10 md:w-12 lg:w-16 text-blue-500 animate-spin" />
+                    <Icons.Music className="w-10 h-10 md:w-12 lg:w-16 text-blue-500 animate-bounce" />
                     <div className="absolute inset-0 bg-blue-500 blur-xl opacity-40 animate-pulse"></div>
                   </div>
                   <p className="text-blue-400 font-black text-[10px] md:text-xs lg:text-xl animate-pulse tracking-widest uppercase text-center px-4">
-                    {isScanning ? 'Syncing...' : 'Evolving...'}
+                    Syncing...
                   </p>
                 </div>
               </div>
@@ -436,14 +387,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {currentVibeText && (
-            <div className="py-2 md:py-2 lg:py-3 px-6 md:px-4 lg:px-8 bg-blue-500/10 border border-blue-500/20 rounded-[1.5rem] md:rounded-[1.5rem] lg:rounded-3xl shadow-lg shadow-blue-500/5 mx-4">
-              <p className="text-blue-300 text-[10px] md:text-[9px] lg:text-sm font-bold tracking-wide text-center italic">
-                "{currentVibeText}"
-              </p>
-            </div>
-          )}
-
           <div className="w-full flex flex-col items-center gap-4 md:gap-4 lg:gap-8">
             <PlayerControls 
               isPlaying={playbackStatus === PlaybackStatus.PLAYING}
@@ -457,10 +400,6 @@ const App: React.FC = () => {
               volume={volume}
               onVolumeChange={handleVolumeChange}
             />
-            
-            <div className="w-full max-w-lg px-4 md:px-0 lg:px-4">
-               <LyricsDisplay lyrics={lyrics} isLoading={isLyricsLoading} />
-            </div>
           </div>
           
           {audioError && (
@@ -491,22 +430,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 md:p-4 lg:p-8 custom-scrollbar pt-2">
-              {mainMenuTab === 'feelings' ? (
-                <div className="space-y-10 animate-in fade-in zoom-in-95 duration-700">
-                  <div className="p-6 md:p-6 lg:p-10 bg-gradient-to-br from-indigo-600/20 to-blue-600/10 rounded-[2rem] md:rounded-[2rem] lg:rounded-[3rem] border border-blue-500/30 shadow-2xl relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:rotate-12 transition-transform duration-1000 hidden lg:block">
-                       <Icons.Sparkles className="w-32 h-32 text-blue-500" />
-                    </div>
-                    <div className="relative z-10 space-y-6 md:space-y-4 lg:space-y-6">
-                      <h4 className="text-xl md:text-lg lg:text-3xl font-black text-white leading-tight">Sync your vibe with AI.</h4>
-                      <p className="text-slate-400 text-sm md:text-xs lg:text-lg leading-relaxed max-w-md">
-                        Describe the atmosphere you want to inhabit. Our Gemini neural engine will sculpt a unique playlist just for you.
-                      </p>
-                      <VibeInput onGenerate={handleGeneratePlaylist} isLoading={isLoadingVibe} />
-                    </div>
-                  </div>
-                </div>
-              ) : mainMenuTab === 'playlist' ? (
+              {mainMenuTab === 'playlist' ? (
                 <div className="space-y-12 md:space-y-8 lg:space-y-12">
                    {addedSongs.length > 0 && (
                      <div className="space-y-6 md:space-y-4 animate-in slide-in-from-top-4 duration-700">
@@ -636,7 +560,7 @@ const App: React.FC = () => {
       />
 
       <footer className="mt-8 md:mt-6 lg:mt-12 text-slate-700 text-[8px] md:text-[7px] lg:text-[10px] font-black uppercase tracking-[0.5em] pb-8 text-center px-4">
-        VibeSun Neural Audio Engine v2.5.0
+        VibeSun Local Audio Engine v2.5.0
       </footer>
     </div>
   );
