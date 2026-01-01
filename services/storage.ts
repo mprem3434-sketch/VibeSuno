@@ -31,7 +31,6 @@ export const saveSong = async (song: Song, file: File): Promise<void> => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
     
-    // We don't store the temporary audioUrl, we store the actual blob
     const { audioUrl, ...songData } = song;
     const storedItem: StoredSong = {
       ...songData,
@@ -41,6 +40,33 @@ export const saveSong = async (song: Song, file: File): Promise<void> => {
     const request = store.put(storedItem);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve();
+  });
+};
+
+export const updateSongMetadata = async (id: string, metadata: Partial<Song>): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    
+    const getRequest = store.get(id);
+    
+    getRequest.onsuccess = () => {
+      const data = getRequest.result as StoredSong;
+      if (data) {
+        const updatedData = { ...data, ...metadata };
+        // Ensure we don't accidentally store audioUrl if it was passed in metadata
+        if ((updatedData as any).audioUrl) delete (updatedData as any).audioUrl;
+        
+        const putRequest = store.put(updatedData);
+        putRequest.onsuccess = () => resolve();
+        putRequest.onerror = () => reject(putRequest.error);
+      } else {
+        resolve(); // Not found in IndexedDB (might be a default song), that's fine
+      }
+    };
+    
+    getRequest.onerror = () => reject(getRequest.error);
   });
 };
 

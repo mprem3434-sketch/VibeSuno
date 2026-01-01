@@ -4,14 +4,16 @@ import { Song, PlaybackStatus } from './types';
 import { DEFAULT_SONGS, Icons } from './constants';
 import PlayerControls from './components/PlayerControls';
 import AudioVisualizer from './components/AudioVisualizer';
-import { getAllStoredSongs, saveSong, deleteStoredSong } from './services/storage';
+import { getAllStoredSongs, saveSong, deleteStoredSong, updateSongMetadata } from './services/storage';
 
 // Import Capacitor for native functionality
 import { Capacitor } from '@capacitor/core';
 import { Filesystem } from '@capacitor/filesystem';
 
+const FAVORITES_STORAGE_KEY = 'vibesun_favorite_ids';
+
 const App: React.FC = () => {
-  const [songs, setSongs] = useState<Song[]>(DEFAULT_SONGS);
+  const [songs, setSongs] = useState<Song[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>(PlaybackStatus.STOPPED);
   const [progress, setProgress] = useState(0);
@@ -43,25 +45,69 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Load stored songs on mount
+  // Initial Load: Combine Default and Stored Songs with Persisted Favorites
   useEffect(() => {
     const loadLibrary = async () => {
       try {
+        // 1. Get Favorite IDs from localStorage
+        const storedFavIdsStr = localStorage.getItem(FAVORITES_STORAGE_KEY);
+        const favoriteIds: string[] = storedFavIdsStr ? JSON.parse(storedFavIdsStr) : [];
+        
+        // 2. Get songs from IndexedDB
         const stored = await getAllStoredSongs();
-        if (stored.length > 0) {
-          // Put stored songs first so user sees their local music immediately
-          setSongs(prev => [...stored, ...prev.filter(ps => !stored.find(s => s.id === ps.id))]);
-        }
+        
+        // 3. Map default songs and merge favorites
+        const defaultWithFavs = DEFAULT_SONGS.map(s => ({
+          ...s,
+          favorite: favoriteIds.includes(s.id)
+        }));
+
+        // 4. Merge stored songs (they might already have favorite set in IDB, but localStorage is source of truth for IDs)
+        const storedWithFavs = stored.map(s => ({
+          ...s,
+          favorite: favoriteIds.includes(s.id)
+        }));
+
+        // Combine: Local songs first, then defaults
+        setSongs([...storedWithFavs, ...defaultWithFavs]);
       } catch (err) {
-        console.error("Failed to load stored library:", err);
+        console.error("Failed to load library:", err);
+        // Fallback to defaults if something goes wrong
+        setSongs(DEFAULT_SONGS);
       }
     };
     loadLibrary();
   }, []);
 
-  const toggleFavorite = (id: string, e: React.MouseEvent) => {
+  const toggleFavorite = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSongs(prev => prev.map(s => s.id === id ? { ...s, favorite: !s.favorite } : s));
+    
+    let isNowFavorite = false;
+    
+    setSongs(prev => {
+      const updated = prev.map(s => {
+        if (s.id === id) {
+          isNowFavorite = !s.favorite;
+          return { ...s, favorite: isNowFavorite };
+        }
+        return s;
+      });
+
+      // Update localStorage Favorites List
+      const favoriteIds = updated.filter(s => s.favorite).map(s => s.id);
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
+      
+      return updated;
+    });
+
+    // If it's a local song, also sync the metadata in IndexedDB
+    if (id.startsWith('local-')) {
+      try {
+        await updateSongMetadata(id, { favorite: isNowFavorite });
+      } catch (err) {
+        console.error("Failed to update IDB favorite status:", err);
+      }
+    }
   };
 
   const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
@@ -72,6 +118,11 @@ const App: React.FC = () => {
       await deleteStoredSong(id);
       setSongs(prev => {
         const newSongs = prev.filter(s => s.id !== id);
+        
+        // Clean up favorites list too
+        const favoriteIds = newSongs.filter(s => s.favorite).map(s => s.id);
+        localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
+
         if (currentSong?.id === id) {
           setCurrentIndex(0);
           setPlaybackStatus(PlaybackStatus.STOPPED);
@@ -104,12 +155,14 @@ const App: React.FC = () => {
   };
 
   const handleNext = useCallback(() => {
+    if (songs.length === 0) return;
     setCurrentIndex((prev) => (prev + 1) % songs.length);
     setProgress(0);
     setAudioError(null);
   }, [songs.length]);
 
   const handlePrev = useCallback(() => {
+    if (songs.length === 0) return;
     setCurrentIndex((prev) => (prev - 1 + songs.length) % songs.length);
     setProgress(0);
     setAudioError(null);
@@ -117,7 +170,7 @@ const App: React.FC = () => {
 
   const handleShuffle = () => {
     if (songs.length <= 1) return;
-    const currentId = songs[currentIndex].id;
+    const currentId = songs[currentIndex]?.id;
     const shuffled = [...songs];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -125,7 +178,7 @@ const App: React.FC = () => {
     }
     const newIndex = shuffled.findIndex(s => s.id === currentId);
     setSongs(shuffled);
-    setCurrentIndex(newIndex);
+    setCurrentIndex(newIndex !== -1 ? newIndex : 0);
   };
 
   const handleSeek = (value: number) => {
@@ -265,6 +318,7 @@ const App: React.FC = () => {
   const addedSongs: Song[] = useMemo(() => filteredSongs.filter(s => s.id.startsWith('local-')), [filteredSongs]);
   
   const upcomingSongs: Song[] = useMemo(() => {
+    if (currentIndex === -1) return [];
     const afterCurrent = songs.slice(currentIndex + 1);
     if (!searchQuery.trim()) return afterCurrent;
     const q = searchQuery.toLowerCase();
@@ -322,7 +376,6 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-1 justify-end">
-              {/* Mobile Search Bar - Positioned left of menu button */}
               <div className="relative md:hidden flex-1 max-w-[180px] group">
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                   <Icons.Search className="w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
@@ -407,7 +460,6 @@ const App: React.FC = () => {
             ))}
           </div>
 
-          {/* Desktop Search Bar - Hidden on Mobile */}
           <div className="hidden md:block relative w-44 lg:w-80 group md:mr-2">
             <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
               <Icons.Search className="w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
@@ -472,7 +524,7 @@ const App: React.FC = () => {
             <div className="flex items-center justify-center gap-3 md:gap-2 lg:gap-4">
               <p className="text-slate-400 text-sm md:text-lg lg:text-2xl font-semibold tracking-tight">{currentSong?.artist}</p>
               <button 
-                onClick={(e) => toggleFavorite(currentSong.id, e)}
+                onClick={(e) => currentSong && toggleFavorite(currentSong.id, e)}
                 className={`p-1.5 md:p-1 lg:p-2 rounded-full transition-all hover:bg-white/5 ${currentSong?.favorite ? 'text-rose-500 scale-110' : 'text-slate-700 hover:text-rose-400'}`}
               >
                 <Icons.Heart className="w-5 h-5 md:w-5 md:h-5 lg:w-7 lg:h-7" fill={currentSong?.favorite ? 'currentColor' : 'none'} />
@@ -539,7 +591,7 @@ const App: React.FC = () => {
                               key={song.id} 
                               onClick={() => {
                                 const idx = songs.findIndex(s => s.id === song.id);
-                                setCurrentIndex(idx);
+                                if (idx !== -1) setCurrentIndex(idx);
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
                               className={`group relative cursor-pointer bg-white/5 rounded-2xl md:rounded-2xl lg:rounded-3xl p-2 md:p-2 lg:p-3 border border-white/5 transition-all hover:bg-white/10 hover:border-blue-500/30 ${currentSong?.id === song.id ? 'ring-2 ring-blue-500/50 bg-blue-500/5' : ''}`}
@@ -566,7 +618,7 @@ const App: React.FC = () => {
                    <div className="space-y-6 md:space-y-4">
                       <h4 className="text-[10px] md:text-[8px] lg:text-sm font-black text-slate-500 uppercase tracking-widest px-2">Next in Queue</h4>
                       <div className="space-y-2">
-                         {upcomingSongs.length > 0 ? upcomingSongs.map((song, i) => (
+                         {upcomingSongs.length > 0 ? upcomingSongs.map((song) => (
                            <SongItem 
                               key={song.id} 
                               song={song} 
@@ -574,7 +626,7 @@ const App: React.FC = () => {
                               isPlaying={false}
                               onPlay={() => {
                                 const idx = songs.findIndex(s => s.id === song.id);
-                                setCurrentIndex(idx);
+                                if (idx !== -1) setCurrentIndex(idx);
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
                               onFavorite={(e) => toggleFavorite(song.id, e)}
@@ -609,7 +661,7 @@ const App: React.FC = () => {
                               isPlaying={playbackStatus === PlaybackStatus.PLAYING}
                               onPlay={() => {
                                 const idx = songs.findIndex(s => s.id === song.id);
-                                setCurrentIndex(idx);
+                                if (idx !== -1) setCurrentIndex(idx);
                                 setPlaybackStatus(PlaybackStatus.PLAYING);
                               }}
                               onFavorite={(e) => toggleFavorite(song.id, e)}
@@ -630,13 +682,18 @@ const App: React.FC = () => {
                       isPlaying={playbackStatus === PlaybackStatus.PLAYING}
                       onPlay={() => {
                         const idx = songs.findIndex(s => s.id === song.id);
-                        setCurrentIndex(idx);
+                        if (idx !== -1) setCurrentIndex(idx);
                         setPlaybackStatus(PlaybackStatus.PLAYING);
                       }}
                       onFavorite={(e) => toggleFavorite(song.id, e)}
                       onDelete={(e) => handleDeleteSong(song.id, e)}
                     />
                   ))}
+                  {filteredSongs.filter(s => !!s.favorite).length === 0 && mainMenuTab === 'favorite' && (
+                    <div className="py-20 text-center text-slate-600 font-bold uppercase tracking-widest">
+                       No favorites yet
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -652,7 +709,7 @@ const App: React.FC = () => {
       />
 
       <footer className="mt-8 md:mt-6 lg:mt-12 text-slate-700 text-[8px] md:text-[7px] lg:text-[10px] font-black uppercase tracking-[0.5em] pb-8 text-center px-4">
-        VibeSun Persistence Engine v2.7.0 {isOffline ? '(Offline)' : ''}
+        VibeSun Persistence Engine v2.8.0 {isOffline ? '(Offline)' : ''}
       </footer>
     </div>
   );
