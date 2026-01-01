@@ -11,13 +11,17 @@ import { Capacitor } from '@capacitor/core';
 import { Filesystem } from '@capacitor/filesystem';
 
 const FAVORITES_STORAGE_KEY = 'vibesun_favorite_ids';
+const VOLUME_STORAGE_KEY = 'vibesun_preferred_volume';
 
 const App: React.FC = () => {
   const [songs, setSongs] = useState<Song[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playbackStatus, setPlaybackStatus] = useState<PlaybackStatus>(PlaybackStatus.STOPPED);
   const [progress, setProgress] = useState(0);
-  const [volume, setVolume] = useState(0.7);
+  const [volume, setVolume] = useState(() => {
+    const saved = localStorage.getItem(VOLUME_STORAGE_KEY);
+    return saved !== null ? parseFloat(saved) : 0.7;
+  });
   const [playlistArt, setPlaylistArt] = useState<string>('');
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -33,6 +37,16 @@ const App: React.FC = () => {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const currentSong = songs[currentIndex];
 
+  // Stable Volume Handler for both UI and System sync
+  const handleVolumeChange = useCallback((value: number) => {
+    const clampedValue = Math.max(0, Math.min(1, value));
+    setVolume(clampedValue);
+    localStorage.setItem(VOLUME_STORAGE_KEY, clampedValue.toString());
+    if (audioRef.current) {
+      audioRef.current.volume = clampedValue;
+    }
+  }, []);
+
   // Monitor Connection
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -45,115 +59,26 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Initial Load: Combine Default and Stored Songs with Persisted Favorites
+  // Sync Media Session Metadata with Android/Device
   useEffect(() => {
-    const loadLibrary = async () => {
-      try {
-        // 1. Get Favorite IDs from localStorage
-        const storedFavIdsStr = localStorage.getItem(FAVORITES_STORAGE_KEY);
-        const favoriteIds: string[] = storedFavIdsStr ? JSON.parse(storedFavIdsStr) : [];
-        
-        // 2. Get songs from IndexedDB
-        const stored = await getAllStoredSongs();
-        
-        // 3. Map default songs and merge favorites
-        const defaultWithFavs = DEFAULT_SONGS.map(s => ({
-          ...s,
-          favorite: favoriteIds.includes(s.id)
-        }));
-
-        // 4. Merge stored songs (they might already have favorite set in IDB, but localStorage is source of truth for IDs)
-        const storedWithFavs = stored.map(s => ({
-          ...s,
-          favorite: favoriteIds.includes(s.id)
-        }));
-
-        // Combine: Local songs first, then defaults
-        setSongs([...storedWithFavs, ...defaultWithFavs]);
-      } catch (err) {
-        console.error("Failed to load library:", err);
-        // Fallback to defaults if something goes wrong
-        setSongs(DEFAULT_SONGS);
-      }
-    };
-    loadLibrary();
-  }, []);
-
-  const toggleFavorite = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    
-    let isNowFavorite = false;
-    
-    setSongs(prev => {
-      const updated = prev.map(s => {
-        if (s.id === id) {
-          isNowFavorite = !s.favorite;
-          return { ...s, favorite: isNowFavorite };
-        }
-        return s;
+    if ('mediaSession' in navigator && currentSong) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentSong.title,
+        artist: currentSong.artist,
+        album: currentSong.album,
+        artwork: [
+          { src: currentSong.coverUrl, sizes: '96x96', type: 'image/png' },
+          { src: currentSong.coverUrl, sizes: '128x128', type: 'image/png' },
+          { src: currentSong.coverUrl, sizes: '192x192', type: 'image/png' },
+          { src: currentSong.coverUrl, sizes: '256x256', type: 'image/png' },
+          { src: currentSong.coverUrl, sizes: '384x384', type: 'image/png' },
+          { src: currentSong.coverUrl, sizes: '512x512', type: 'image/png' },
+        ]
       });
-
-      // Update localStorage Favorites List
-      const favoriteIds = updated.filter(s => s.favorite).map(s => s.id);
-      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
-      
-      return updated;
-    });
-
-    // If it's a local song, also sync the metadata in IndexedDB
-    if (id.startsWith('local-')) {
-      try {
-        await updateSongMetadata(id, { favorite: isNowFavorite });
-      } catch (err) {
-        console.error("Failed to update IDB favorite status:", err);
-      }
     }
-  };
+  }, [currentSong]);
 
-  const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm("Are you sure you want to remove this song from your stored library?")) return;
-    
-    try {
-      await deleteStoredSong(id);
-      setSongs(prev => {
-        const newSongs = prev.filter(s => s.id !== id);
-        
-        // Clean up favorites list too
-        const favoriteIds = newSongs.filter(s => s.favorite).map(s => s.id);
-        localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
-
-        if (currentSong?.id === id) {
-          setCurrentIndex(0);
-          setPlaybackStatus(PlaybackStatus.STOPPED);
-        }
-        return newSongs;
-      });
-    } catch (err) {
-      console.error("Failed to delete song:", err);
-      alert("Error removing track from storage.");
-    }
-  };
-
-  const handleTogglePlay = async () => {
-    if (!audioRef.current) return;
-    
-    setAudioError(null);
-    if (playbackStatus === PlaybackStatus.PLAYING) {
-      audioRef.current.pause();
-      setPlaybackStatus(PlaybackStatus.PAUSED);
-    } else {
-      try {
-        await audioRef.current.play();
-        setPlaybackStatus(PlaybackStatus.PLAYING);
-      } catch (error) {
-        console.error("Playback failed:", error);
-        setAudioError("Unable to play audio. Check permissions or file availability.");
-        setPlaybackStatus(PlaybackStatus.PAUSED);
-      }
-    }
-  };
-
+  // Handle Hardware Media Keys (Next/Prev/Play/Pause)
   const handleNext = useCallback(() => {
     if (songs.length === 0) return;
     setCurrentIndex((prev) => (prev + 1) % songs.length);
@@ -167,6 +92,134 @@ const App: React.FC = () => {
     setProgress(0);
     setAudioError(null);
   }, [songs.length]);
+
+  const handleTogglePlay = useCallback(async () => {
+    if (!audioRef.current) return;
+    
+    setAudioError(null);
+    if (playbackStatus === PlaybackStatus.PLAYING) {
+      audioRef.current.pause();
+      setPlaybackStatus(PlaybackStatus.PAUSED);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    } else {
+      try {
+        await audioRef.current.play();
+        setPlaybackStatus(PlaybackStatus.PLAYING);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      } catch (error) {
+        console.error("Playback failed:", error);
+        setAudioError("Unable to play audio. Check permissions or file availability.");
+        setPlaybackStatus(PlaybackStatus.PAUSED);
+      }
+    }
+  }, [playbackStatus]);
+
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.setActionHandler('play', handleTogglePlay);
+      navigator.mediaSession.setActionHandler('pause', handleTogglePlay);
+      navigator.mediaSession.setActionHandler('previoustrack', handlePrev);
+      navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+      
+      // Sync seeking with device scrubber
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined && audioRef.current) {
+          audioRef.current.currentTime = details.seekTime;
+          setProgress(details.seekTime);
+        }
+      });
+
+      // SYNC: Volume match with device slider requests
+      try {
+        // Fix: Use any cast for details to access volume property which is not present in standard MediaSessionActionDetails
+        navigator.mediaSession.setActionHandler('setvolume' as any, (details: any) => {
+          if (details.volume !== undefined) {
+            handleVolumeChange(details.volume);
+          }
+        });
+      } catch (e) {
+        console.warn("MediaSession 'setvolume' not supported in this browser");
+      }
+    }
+    
+    return () => {
+      if ('mediaSession' in navigator) {
+        const actions: any[] = ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto', 'setvolume'];
+        actions.forEach(action => {
+          try { navigator.mediaSession.setActionHandler(action, null); } catch (e) {}
+        });
+      }
+    };
+  }, [handleTogglePlay, handleNext, handlePrev, handleVolumeChange]);
+
+  // Initial Load: Combine Default and Stored Songs with Persisted Favorites
+  useEffect(() => {
+    const loadLibrary = async () => {
+      try {
+        const storedFavIdsStr = localStorage.getItem(FAVORITES_STORAGE_KEY);
+        const favoriteIds: string[] = storedFavIdsStr ? JSON.parse(storedFavIdsStr) : [];
+        const stored = await getAllStoredSongs();
+        const defaultWithFavs = DEFAULT_SONGS.map(s => ({
+          ...s,
+          favorite: favoriteIds.includes(s.id)
+        }));
+        const storedWithFavs = stored.map(s => ({
+          ...s,
+          favorite: favoriteIds.includes(s.id)
+        }));
+        setSongs([...storedWithFavs, ...defaultWithFavs]);
+      } catch (err) {
+        console.error("Failed to load library:", err);
+        setSongs(DEFAULT_SONGS);
+      }
+    };
+    loadLibrary();
+  }, []);
+
+  const toggleFavorite = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    let isNowFavorite = false;
+    setSongs(prev => {
+      const updated = prev.map(s => {
+        if (s.id === id) {
+          isNowFavorite = !s.favorite;
+          return { ...s, favorite: isNowFavorite };
+        }
+        return s;
+      });
+      const favoriteIds = updated.filter(s => s.favorite).map(s => s.id);
+      localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
+      return updated;
+    });
+    if (id.startsWith('local-')) {
+      try {
+        await updateSongMetadata(id, { favorite: isNowFavorite });
+      } catch (err) {
+        console.error("Failed to update IDB favorite status:", err);
+      }
+    }
+  };
+
+  const handleDeleteSong = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to remove this song from your stored library?")) return;
+    try {
+      await deleteStoredSong(id);
+      setSongs(prev => {
+        const newSongs = prev.filter(s => s.id !== id);
+        const favoriteIds = newSongs.filter(s => s.favorite).map(s => s.id);
+        localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favoriteIds));
+        if (currentSong?.id === id) {
+          setCurrentIndex(0);
+          setPlaybackStatus(PlaybackStatus.STOPPED);
+        }
+        return newSongs;
+      });
+    } catch (err) {
+      console.error("Failed to delete song:", err);
+      alert("Error removing track from storage.");
+    }
+  };
 
   const handleShuffle = () => {
     if (songs.length <= 1) return;
@@ -187,22 +240,11 @@ const App: React.FC = () => {
     setProgress(value);
   };
 
-  const handleVolumeChange = (value: number) => {
-    setVolume(value);
-    if (audioRef.current) {
-      audioRef.current.volume = value;
-    }
-  };
-
   const processFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    
     setIsScanning(true);
-    const newSongs: Song[] = [];
-    
     const processingPromises = Array.from(files).map(async (file, index) => {
       if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|m4a)$/i)) return null;
-      
       const url = URL.createObjectURL(file);
       const song: Song = {
         id: `local-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
@@ -214,25 +256,20 @@ const App: React.FC = () => {
         duration: 0,
         favorite: false
       };
-
       try {
         await saveSong(song, file);
       } catch (err) {
         console.error("Failed to persist song:", file.name, err);
       }
-
       return song;
     });
-
     const results = await Promise.all(processingPromises);
     const validSongs = results.filter((s): s is Song => s !== null);
-
     if (validSongs.length > 0) {
       setSongs(prev => [...validSongs, ...prev]);
       setCurrentIndex(0);
       setAudioError(null);
       setMainMenuTab('playlist');
-      
       setTimeout(() => {
         if (audioRef.current) {
           audioRef.current.load();
@@ -266,7 +303,6 @@ const App: React.FC = () => {
         return;
       }
     }
-
     if (folderInputRef.current) {
       folderInputRef.current.click();
     }
@@ -285,7 +321,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
     const updateProgress = () => setProgress(audio.currentTime);
     const onEnded = () => handleNext();
     const onLoadedMetadata = () => {
@@ -293,11 +328,9 @@ const App: React.FC = () => {
         setSongs(prev => prev.map(s => s.id === currentSong.id ? { ...s, duration: audio.duration } : s));
       }
     };
-
     audio.addEventListener('timeupdate', updateProgress);
     audio.addEventListener('ended', onEnded);
     audio.addEventListener('loadedmetadata', onLoadedMetadata);
-
     return () => {
       audio.removeEventListener('timeupdate', updateProgress);
       audio.removeEventListener('ended', onEnded);
@@ -318,7 +351,7 @@ const App: React.FC = () => {
   const addedSongs: Song[] = useMemo(() => filteredSongs.filter(s => s.id.startsWith('local-')), [filteredSongs]);
   
   const upcomingSongs: Song[] = useMemo(() => {
-    if (currentIndex === -1) return [];
+    if (currentIndex === -1 || songs.length === 0) return [];
     const afterCurrent = songs.slice(currentIndex + 1);
     if (!searchQuery.trim()) return afterCurrent;
     const q = searchQuery.toLowerCase();
@@ -704,12 +737,18 @@ const App: React.FC = () => {
       <audio 
         ref={audioRef} 
         src={currentSong?.audioUrl} 
-        onPlay={() => setPlaybackStatus(PlaybackStatus.PLAYING)}
-        onPause={() => setPlaybackStatus(PlaybackStatus.PAUSED)}
+        onPlay={() => {
+          setPlaybackStatus(PlaybackStatus.PLAYING);
+          if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+        }}
+        onPause={() => {
+          setPlaybackStatus(PlaybackStatus.PAUSED);
+          if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+        }}
       />
 
       <footer className="mt-8 md:mt-6 lg:mt-12 text-slate-700 text-[8px] md:text-[7px] lg:text-[10px] font-black uppercase tracking-[0.5em] pb-8 text-center px-4">
-        VibeSun Persistence Engine v2.8.0 {isOffline ? '(Offline)' : ''}
+        VibeSun Persistence Engine v3.0.0 {isOffline ? '(Offline)' : ''}
       </footer>
     </div>
   );
